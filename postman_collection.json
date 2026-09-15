@@ -1,0 +1,63 @@
+{
+  "info": {
+    "_postman_id": "a8f5c9e2-3b47-4f12-9c10-d4b9671e6543",
+    "name": "PDF Editor API Collection",
+    "description": "Postman collection for testing PDF Editor APIs (API A: PDF Language Translator & API B: PDF Watermark).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/health",
+          "host": ["{{base_url}}"],
+          "path": ["health"]
+        }
+      }
+    },
+    {
+      "name": "API A - Translate PDF (EN to BN)",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": "",
+              "description": "Source PDF file to translate"
+            },
+            {
+              "key": "source_language",
+              "value": "en",
+              "type": "text"
+            },
+            {
+              "key": "target_language",
+              "value": "bn",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/api/translate-pdf",
+          "host": ["{{base_url}}"],
+          "path": ["api", "translate-pdf"]
+        },
+        "description": "Translates uploaded PDF from source language to target language (e.g. English to Bangla) and returns a downloadable translated PDF with embedded Bangla Unicode fonts."
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000",
+      "type": "string"
+    }
+  ]
+}
