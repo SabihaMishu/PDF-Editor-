@@ -155,3 +155,9 @@ The test suite validates:
 - [x] OCR extraction on scanned/image-only PDFs
 - [x] Dynamic pagination without blank pages
 - [x] Watermark PDF positioning, opacity, and color validation
+
+
+## 👨‍💼 Author & Authority
+**Author:** [Sabiha Jahan]  
+**Repository Owner:** [SabihaMishu](https://github.com/SabihaMishu)  
+**Maintainer:** [Email:mishuforwork@gmail.com]
