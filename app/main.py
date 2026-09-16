@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.api.translate import router as translate_router
+from app.api.watermark import router as watermark_router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -24,6 +25,7 @@ app.add_middleware(
 
 # Register routers
 app.include_router(translate_router, prefix=settings.API_PREFIX, tags=["PDF Translation"])
+app.include_router(watermark_router, prefix="", tags=["PDF Watermark"])
 
 @app.get("/", tags=["General"])
 async def root():
@@ -35,6 +37,7 @@ async def root():
         "documentation": "/docs",
         "endpoints": {
             "translate_pdf": "POST /api/translate-pdf",
+            "watermark_pdf": "POST /editor/pdf/watermark"
         }
     }
 

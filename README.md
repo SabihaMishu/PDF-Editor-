@@ -1,40 +1,78 @@
 # PDF Editor APIs
 
-A robust, high-performance REST API service built with **FastAPI** providing PDF editing, translation, and transformation utilities.
+A robust, high-performance REST API service built with **FastAPI** providing PDF translation, optical character recognition (OCR), text formatting, and document watermarking utilities.
 
 ---
 
-## 🚀 Features
+## 🚀 Key APIs
 
 ### **API A — PDF Language Translator (`POST /api/translate-pdf`)**
-- **Multilingual Support:** Translates between supported languages (e.g., English `en` to Bangla `bn`).
-- **OCR Fallback for Image/Scanned PDFs:** Automatically identifies image-only or scanned pages with missing digital text streams and runs native OCR fallback (`winocr`) to extract text.
-- **Clean Text Spacing & De-Hyphenation:** Merges artificial hard line breaks within paragraphs into smooth, flowing prose; repairs hyphenated line splits (`trans- \nlated` $\rightarrow$ `translated`); and eliminates redundant spaces.
-- **Dynamic Page Breaks & Blank Page Prevention:** Content flows naturally across pages without generating empty or trailing blank pages. Dynamically assesses vertical page space before creating new pages or section dividers.
-- **Flawless Bangla OpenType Shaping:** Utilizes **FPDF2** paired with **HarfBuzz (`uharfbuzz`)** and embedded **Kalpurush Unicode font**, rendering complex Bengali ligatures (যুক্তাক্ষর: `ক্ষ`, `জ্ঞ`, `ঙ্ক`, `শ্র`) and pre-base vowel signs (`ি`, `ে`, `ৈ`) with 100% typographical accuracy.
-- **Downloadable Output:** Streams freshly generated vector PDFs as downloadable attachments with proper filenames.
-- **Interactive OpenAPI / Swagger UI:** Available out-of-the-box at `/docs`.
+- **Completely Free Translation Engine:** Uses **MyMemory** as the primary translator with automatic fallback to **Google public endpoints**.
+- **In-Memory Caching:** Automatically caches translated phrases and paragraphs in memory to speed up multi-page documents and avoid duplicate outbound requests.
+- **Smart Chunking:** Intelligently splits text into chunks $\le 450$ characters (strictly below MyMemory free limits) respecting paragraphs (`\n\n`), line breaks (`\n`), sentences (`.!?` and Bengali dari `।`), and words.
+- **Rate-Limit & Retry Hardening:** Configured with strict 8.0s timeout per request, 0.25s delay between sequential calls, 1.0s backoff, and **max 2 retries** per provider before returning a clean HTTP 503 error.
+- **100,000-Character Safety Limit:** Automatically guards backend resources by rejecting documents exceeding 100,000 characters with an HTTP 400 Bad Request.
+- **OCR Fallback for Scanned/Image PDFs:** Automatically detects scanned pages or images missing digital text streams and extracts text using native Windows OCR (`winocr`).
+- **Clean Text Spacing & De-Hyphenation:** Merges artificial hard line breaks within paragraphs, repairs hyphenated line splits (`trans- \nlated` $\rightarrow$ `translated`), and strips redundant whitespace.
+- **Dynamic Page Breaks:** Content flows naturally across pages without creating orphan blank pages.
+- **Flawless Bangla OpenType Shaping:** Employs **FPDF2** with **HarfBuzz (`uharfbuzz`)** and embedded **Kalpurush Unicode font**, rendering complex Bengali ligatures (যুক্তাক্ষর: `ক্ষ`, `জ্ঞ`, `ঙ্ক`, `শ্র`) and pre-base vowel diacritics (`ি`, `ে`, `ৈ`) with 100% typographical accuracy.
+- **Downloadable Output:** Streams translated vector PDFs directly as downloadable attachments with proper filenames.
 
 ---
 
-## 🛠️ Architecture & Technical Design
+### **API B — PDF Watermark (`POST /editor/pdf/watermark`)**
+- **Full-Document Text Watermarking:** Injects customizable text watermarks across every page of a PDF document.
+- **Configurable Watermark Attributes:**
+  - `text`: Watermark string (e.g., `CONFIDENTIAL`, `DRAFT`, `COPY`).
+  - `position`: Anchor position on each page (`center`, `top-left`, `top-center`, `top-right`, `bottom-left`, `bottom-center`, `bottom-right`).
+  - `opacity`: Opacity level from `0.0` (invisible) to `1.0` (fully opaque).
+  - `color`: Hex color code (e.g., `#FF0000`, `#888888`, `#0055FF`).
+- **Vector Overlay Performance:** Fast, zero-quality-loss rendering powered by **PyMuPDF (`fitz`)**.
 
-### 1. Optical Character Recognition (OCR) Fallback
-When processing documents containing scanned paper, raster graphics, or flattened text, standard digital extraction produces empty strings. 
-- The extractor checks if extracted digital text is below threshold (`< 25` characters or image-dominated).
-- If triggered, the page is rendered to a crisp 200-DPI raster in memory and processed by native Windows OCR (`winocr`).
-- If OCR yields text, it seamlessly replaces the empty digital layer.
+---
 
-### 2. Dynamic Page Breaks & Clean Spacing
-Older PDF generators often call `pdf.add_page()` blindly for each source page, creating orphan blank pages when source pages have minimal or no content.
-- Our generator checks vertical position `pdf.get_y()`. If remaining page height is ample ($\ge 45\,\text{mm}$), it separates content with clean section gaps.
-- When space is insufficient ($< 45\,\text{mm}$), it dynamically triggers a clean page break.
-- Auto-page breaks during paragraph wrapping are respected without inserting duplicate blank pages.
+## 🛠️ System Architecture
 
-### 3. Bangla Unicode Text Shaping
-- Standard PDF libraries (and raw PyMuPDF text insertion) fail on Indic scripts because glyphs must undergo GSUB (Glyph Substitution) and GPOS (Glyph Positioning).
-- By enabling `pdf.set_text_shaping(True)` in `fpdf2`, `uharfbuzz` shapes complex ligatures and reorders vowel diacritics before the vector stream is written.
-- Embedded `Kalpurush.ttf` font supports both full Latin and Bengali Unicode blocks.
+```
+                                  +-------------------+
+                                  | Client / Frontend |
+                                  +---------+---------+
+                                            |
+                                            v
+                                   +-----------------+
+                                   |  FastAPI Router |
+                                   +--------+--------+
+                                            |
+                   +------------------------+------------------------+
+                   |                                                 |
+                   v                                                 v
+        [ POST /api/translate-pdf ]                     [ POST /editor/pdf/watermark ]
+                   |                                                 |
+         +---------+---------+                             +---------+---------+
+         | PDFExtractorService|                             | WatermarkService  |
+         | (Digital + WinOCR) |                             | (PyMuPDF Vector)  |
+         +---------+---------+                             +---------+---------+
+                   |                                                 |
+         +---------+---------+                                       v
+         |TranslationService |                               [ Watermarked PDF ]
+         | - 100k Safety Chk |
+         | - In-Memory Cache |
+         | - Smart Chunking  |
+         | - MyMemory (Pri)  |
+         | - Google (Fallbk) |
+         | - Max 2 Retries   |
+         +---------+---------+
+                   |
+         +---------+---------+
+         | PDFGeneratorService|
+         | - FPDF2 + HarfBuzz|
+         | - Kalpurush Font  |
+         | - Dynamic Breaks  |
+         +---------+---------+
+                   |
+                   v
+          [ Translated PDF ]
+```
 
 ---
 
@@ -42,7 +80,7 @@ Older PDF generators often call `pdf.add_page()` blindly for each source page, c
 
 ### 1. Prerequisites
 - Python 3.10+ (tested on Python 3.11)
-- Windows 10/11 (with Windows Media OCR support)
+- Windows 10/11 (for native OCR engine support)
 
 ### 2. Install Dependencies
 ```bash
@@ -50,7 +88,7 @@ pip install -r requirements.txt
 ```
 
 ### 3. Environment Variables (Optional)
-Copy `.env.example` to `.env` if custom configurations are needed:
+Create `.env` if custom port or configuration is required:
 ```bash
 cp .env.example .env
 ```
@@ -71,22 +109,49 @@ Once running:
 
 ---
 
+## 📡 API Reference
+
+### 1. Translate PDF
+- **Endpoint:** `POST /api/translate-pdf`
+- **Content-Type:** `multipart/form-data`
+- **Parameters:**
+  | Field | Type | Required | Description |
+  |---|---|---|---|
+  | `file` | Binary (PDF) | Yes | Source PDF file to translate |
+  | `source_language` | String | Yes | Source language ISO code (e.g. `en`) |
+  | `target_language` | String | Yes | Target language ISO code (e.g. `bn`) |
+- **Response:** `200 OK` (binary PDF stream with `attachment` Content-Disposition header).
+
+### 2. Watermark PDF
+- **Endpoint:** `POST /editor/pdf/watermark`
+- **Content-Type:** `multipart/form-data`
+- **Parameters:**
+  | Field | Type | Required | Description |
+  |---|---|---|---|
+  | `file` | Binary (PDF) | Yes | Source PDF file |
+  | `text` | String | Yes | Watermark text string |
+  | `position` | String | Yes | `center`, `top-left`, `top-center`, `top-right`, `bottom-left`, `bottom-center`, `bottom-right` |
+  | `opacity` | Float | Yes | `0.0` to `1.0` (e.g. `0.3`) |
+  | `color` | String | Yes | Hex color code (e.g. `#FF0000`, `#888888`) |
+- **Response:** `200 OK` (binary PDF stream with `attachment` Content-Disposition header).
+
+---
+
 ## 🧪 Testing
 
 ### Automated Test Suite
-Run the test suite with `pytest`:
+Run all unit and integration tests with `pytest`:
 ```bash
 pytest -v
 ```
-*(Tests verify digital extraction, OCR fallback on scanned images, text normalization, dynamic pagination with zero blank pages, and endpoint responses).*
 
-### Manual Testing via Swagger UI (`/docs`)
-1. Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
-2. Expand `POST /api/translate-pdf` and click **Try it out**.
-3. Upload a PDF file (digital or scanned).
-4. Set `source_language`: `en`, `target_language`: `bn`.
-5. Click **Execute** and click **Download file** from the response.
-
-### Manual Testing via Postman
-1. Import [postman_collection.json](file:///D:/mishu/Projects/PDF%20Editor/postman_collection.json) into Postman.
-2. Run `API A - Translate PDF (EN to BN)`.
+The test suite validates:
+- [x] Translation endpoint end-to-end PDF output
+- [x] 100,000-character safety limit rejection (400 Bad Request)
+- [x] Smart chunking & sentence boundary preservation
+- [x] In-memory translation caching
+- [x] Dual provider fallback (MyMemory $\rightarrow$ Google)
+- [x] Max 2 retries & 503 error handling
+- [x] OCR extraction on scanned/image-only PDFs
+- [x] Dynamic pagination without blank pages
+- [x] Watermark PDF positioning, opacity, and color validation

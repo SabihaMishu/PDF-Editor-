@@ -90,7 +90,12 @@ class PDFGeneratorService:
                     continue
 
                 # Multi_cell handles automatic word-wrapping and HarfBuzz text shaping
-                pdf.multi_cell(w=0, h=6.5, text=para)
+                try:
+                    pdf.multi_cell(w=0, h=6.5, text=para)
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning(f"multi_cell exception: {e}. Falling back to character-level wrapping.")
+                    pdf.multi_cell(w=0, h=6.5, text=para, wrapmode="CHAR")
 
                 # Paragraph spacing (only if there's enough space left on page)
                 if para_idx < len(paragraphs) - 1:

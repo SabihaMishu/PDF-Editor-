@@ -2,6 +2,7 @@ import io
 import fitz
 from PIL import Image, ImageDraw
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from unittest.mock import patch
 
@@ -102,6 +103,9 @@ def test_pdf_extractor_service_ocr_fallback():
     # Check that OCR recovered text from the image
     assert len(pages[0].strip()) > 0
 
+from unittest.mock import patch, MagicMock
+from app.services.translation_service import TranslationService
+
 def test_dynamic_page_breaks_no_blank_pages():
     # 3 small text fragments and empty pages should condense without empty pages
     input_pages = [
@@ -120,7 +124,7 @@ def test_translate_pdf_endpoint_success():
     sample_bytes = create_sample_pdf("Hello world! This is an automated test.")
     
     with patch(
-        "app.services.translation_service.TranslationService.translate_chunk",
+        "app.services.translation_service.TranslationService.translate_batch",
         return_value="হ্যালো বিশ্ব! এটি একটি স্বয়ংক্রিয় পরীক্ষা।"
     ):
         response = client.post(
@@ -137,3 +141,95 @@ def test_translate_pdf_endpoint_success():
         doc = fitz.open(stream=response.content, filetype="pdf")
         assert doc.page_count == 1
         doc.close()
+
+def test_safety_limit_100k_characters():
+    TranslationService.clear_cache()
+    oversized_text = "A" * 100_001
+    sample_bytes = create_sample_pdf(oversized_text[:1000])  # small PDF for upload
+    
+    # Mock extractor returning >100k characters across pages
+    with patch(
+        "app.services.pdf_extractor.PDFExtractorService.extract_text_by_pages",
+        return_value=["A" * 60_000, "B" * 45_000]
+    ):
+        response = client.post(
+            "/api/translate-pdf",
+            files={"file": ("large.pdf", sample_bytes, "application/pdf")},
+            data={"source_language": "en", "target_language": "bn"}
+        )
+        assert response.status_code == 400
+        assert "exceeds the safety limit of 100000 characters" in response.json()["detail"]
+
+def test_smart_chunking_rules():
+    # Long text with multiple paragraphs, sentences, and bengali dari
+    long_para = "First sentence here. Second sentence with details! Third sentence? Fourth sentence। " * 10
+    text = f"Header para\n\n{long_para}\n\nFooter para"
+    
+    chunks = TranslationService._chunk_text(text, max_chunk_size=450)
+    assert len(chunks) > 1
+    for chunk in chunks:
+        assert len(chunk) <= 450
+    # Make sure text content preserved across chunks
+    combined = " ".join(chunks)
+    assert "Header para" in combined
+    assert "Footer para" in combined
+
+def test_translation_caching():
+    TranslationService.clear_cache()
+    assert TranslationService.get_cache_size() == 0
+    
+    with patch.object(
+        TranslationService,
+        "_translate_mymemory",
+        return_value="ক্যাশে টেস্ট"
+    ) as mock_mm:
+        # First call: hits provider
+        res1 = TranslationService.translate_batch("Cache Test String", "en", "bn")
+        assert res1 == "ক্যাশে টেস্ট"
+        assert mock_mm.call_count == 1
+        assert TranslationService.get_cache_size() == 1
+        
+        # Second call: served from cache without calling provider
+        res2 = TranslationService.translate_batch("Cache Test String", "en", "bn")
+        assert res2 == "ক্যাশে টেস্ট"
+        assert mock_mm.call_count == 1  # Still 1, not called again
+
+def test_fallback_to_google_on_mymemory_failure():
+    TranslationService.clear_cache()
+    
+    with patch.object(
+        TranslationService,
+        "_translate_mymemory",
+        side_effect=RuntimeError("MyMemory quota exceeded")
+    ) as mock_mm, patch.object(
+        TranslationService,
+        "_translate_google",
+        return_value="গুগল অনুবাদ সফল"
+    ) as mock_google:
+        result = TranslationService.translate_batch("Fallback test line", "en", "bn")
+        assert result == "গুগল অনুবাদ সফল"
+        # MyMemory tried max 2 times
+        assert mock_mm.call_count == 2
+        # Google succeeded on 1st attempt
+        assert mock_google.call_count == 1
+
+def test_max_2_retries_exhaustion_raises_503():
+    TranslationService.clear_cache()
+    
+    with patch.object(
+        TranslationService,
+        "_translate_mymemory",
+        side_effect=RuntimeError("MyMemory 500 error")
+    ) as mock_mm, patch.object(
+        TranslationService,
+        "_translate_google",
+        side_effect=RuntimeError("Google 429 too many requests")
+    ) as mock_google:
+        with pytest.raises(HTTPException) as exc_info:
+            TranslationService.translate_batch("Failing test line", "en", "bn")
+        
+        assert exc_info.value.status_code == 503
+        # Exactly 2 retries per provider
+        assert mock_mm.call_count == 2
+        assert mock_google.call_count == 2
+
